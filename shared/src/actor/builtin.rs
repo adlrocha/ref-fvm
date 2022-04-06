@@ -110,7 +110,7 @@ pub fn load_manifest<B: Blockstore>(
     bs: &B,
     root_cid: &Cid,
     ver: u32,
-) -> Result<Manifest, ManifestError<B>> {
+) -> Result<Manifest, ManifestError<B::Error>> {
     match ver {
         0 => load_manifest_v0(bs, root_cid),
         1 => load_manifest_v1(bs, root_cid),
@@ -121,7 +121,7 @@ pub fn load_manifest<B: Blockstore>(
 pub fn load_manifest_v0<B: Blockstore>(
     bs: &B,
     root_cid: &Cid,
-) -> Result<Manifest, ManifestError<B>> {
+) -> Result<Manifest, ManifestError<B::Error>> {
     match bs.get_cbor::<Manifest>(root_cid)? {
         Some(mf) => Ok(mf),
         None => Err(ManifestError::MissingRootCid(*root_cid)),
@@ -131,7 +131,7 @@ pub fn load_manifest_v0<B: Blockstore>(
 pub fn load_manifest_v1<B: Blockstore>(
     bs: &B,
     root_cid: &Cid,
-) -> Result<Manifest, ManifestError<B>> {
+) -> Result<Manifest, ManifestError<B::Error>> {
     let vec: Vec<(String, Cid)> = match bs.get_cbor(root_cid)? {
         Some(vec) => vec,
         None => {
@@ -154,7 +154,7 @@ pub fn load_manifest_v1<B: Blockstore>(
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ManifestError<BS: Blockstore> {
+pub enum ManifestError<E> {
     #[error("unknown manifest version {0}")]
     UnknownVersion(u32),
     #[error("cannot find manifest root cid {0}")]
@@ -162,5 +162,5 @@ pub enum ManifestError<BS: Blockstore> {
     #[error("bad builtin actor name: {0}: {1}")]
     BadBuiltinActor(String, String),
     #[error("encoding {0}")]
-    Encoding(#[from] CborStoreError<BS>),
+    Encoding(#[from] CborStoreError<E>),
 }
