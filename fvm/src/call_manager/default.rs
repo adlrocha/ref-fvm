@@ -19,7 +19,7 @@ use crate::{account_actor, syscall_error};
 
 /// The default [`CallManager`] implementation.
 #[repr(transparent)]
-pub struct DefaultCallManager<M>(Option<InnerDefaultCallManager<M>>);
+pub struct DefaultCallManager<M>(Option<Box<InnerDefaultCallManager<M>>>);
 
 #[doc(hidden)]
 #[derive(Deref, DerefMut)]
@@ -65,7 +65,7 @@ where
     type Machine = M;
 
     fn new(machine: M, gas_limit: i64, origin: Address, nonce: u64) -> Self {
-        DefaultCallManager(Some(InnerDefaultCallManager {
+        DefaultCallManager(Some(Box::new(InnerDefaultCallManager {
             machine,
             gas_tracker: GasTracker::new(gas_limit, 0),
             origin,
@@ -73,7 +73,7 @@ where
             num_actors_created: 0,
             call_stack_depth: 0,
             backtrace: Backtrace::default(),
-        }))
+        })))
     }
 
     fn send<K>(
