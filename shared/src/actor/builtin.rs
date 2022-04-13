@@ -34,6 +34,8 @@ pub enum Type {
     Multisig = 9,
     Reward = 10,
     VerifiedRegistry = 11,
+    SCA = 12,
+    Subnet = 13,
 }
 
 impl Type {
@@ -47,6 +49,7 @@ impl Type {
             || self == &Type::Power
             || self == &Type::Market
             || self == &Type::VerifiedRegistry
+            || self == &Type::SCA
     }
 
     /// Returns true if the code belongs to an account actor.
@@ -79,6 +82,8 @@ impl TryFrom<&str> for Type {
             "multisig" => Type::Multisig,
             "reward" => Type::Reward,
             "verifiedregistry" => Type::VerifiedRegistry,
+            "sca" => Type::SCA,
+            "subnet" => Type::Subnet,
             _ => return Err(String::from("unrecognized actor type")),
         };
         Ok(ret)
@@ -99,6 +104,8 @@ impl From<&Type> for String {
             Type::Multisig => "multisig",
             Type::Reward => "reward",
             Type::VerifiedRegistry => "verifiedregistry",
+            Type::SCA => "sca",
+            Type::Subnet => "subnet",
         }
         .to_string()
     }
