@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Display, Formatter};
+
 use anyhow::anyhow;
 use bimap::BiBTreeMap;
 use cid::Cid;
@@ -108,6 +110,12 @@ impl From<&Type> for String {
             Type::Subnet => "subnet",
         }
         .to_string()
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(self, f)
     }
 }
 
