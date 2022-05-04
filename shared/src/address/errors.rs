@@ -32,6 +32,8 @@ pub enum Error {
     Base32Decoding(#[from] DecodeError),
     #[error("Cannot get id from non id address")]
     NonIDAddress,
+    #[error("Invalid Hierarchical Address")]
+    InvalidHierarchicalAddr,
 }
 
 impl From<num::ParseIntError> for Error {

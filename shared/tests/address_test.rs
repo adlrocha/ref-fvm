@@ -291,7 +291,7 @@ fn invalid_string_addresses() {
             expected: Error::UnknownNetwork,
         },
         StringAddrVec {
-            input: "f4gfvuyh7v2sx3patm5k23wdzmhyhtmqctasbr23y",
+            input: "f5gfvuyh7v2sx3patm5k23wdzmhyhtmqctasbr23y",
             expected: Error::UnknownProtocol,
         },
         StringAddrVec {
@@ -363,7 +363,7 @@ fn invalid_byte_addresses() {
     let test_vectors = &[
         // Unknown Protocol
         StringAddrVec {
-            input: vec![4, 4, 4],
+            input: vec![5, 4, 4],
             expected: Error::UnknownProtocol,
         },
         // ID protocol

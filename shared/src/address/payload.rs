@@ -5,7 +5,9 @@ use std::convert::TryInto;
 use std::hash::Hash;
 use std::u64;
 
-use super::{from_leb_bytes, to_leb_bytes, Error, Protocol, BLS_PUB_LEN, PAYLOAD_HASH_LEN};
+use super::{
+    from_leb_bytes, to_leb_bytes, Error, Protocol, BLS_PUB_LEN, MAX_ADDRESS_LEN, PAYLOAD_HASH_LEN,
+};
 
 /// Payload is the data of the Address. Variants are the supported Address protocols.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -18,6 +20,9 @@ pub enum Payload {
     Actor([u8; PAYLOAD_HASH_LEN]),
     /// BLS key address, full 48 byte public key
     BLS([u8; BLS_PUB_LEN]),
+    /// Hierarchical address. Up to 64 bytes long
+    // FIXME: We should make it dyncamic or longer?
+    Hierarchical([u8; MAX_ADDRESS_LEN]),
 }
 
 impl Payload {
@@ -29,6 +34,7 @@ impl Payload {
             Secp256k1(arr) => arr.to_vec(),
             Actor(arr) => arr.to_vec(),
             BLS(arr) => arr.to_vec(),
+            Hierarchical(arr) => arr.to_vec(),
         }
     }
 
@@ -40,6 +46,7 @@ impl Payload {
             Secp256k1(arr) => arr.to_vec(),
             Actor(arr) => arr.to_vec(),
             BLS(arr) => arr.to_vec(),
+            Hierarchical(arr) => arr.to_vec(),
         };
 
         bz.insert(0, Protocol::from(self) as u8);
@@ -65,6 +72,11 @@ impl Payload {
                     .try_into()
                     .map_err(|_| Error::InvalidPayloadLength(payload.len()))?,
             ),
+            Protocol::Hierarchical => Self::Hierarchical(
+                payload
+                    .try_into()
+                    .map_err(|_| Error::InvalidPayloadLength(payload.len()))?,
+            ),
         };
         Ok(payload)
     }
@@ -77,6 +89,7 @@ impl From<Payload> for Protocol {
             Payload::Secp256k1(_) => Self::Secp256k1,
             Payload::Actor(_) => Self::Actor,
             Payload::BLS(_) => Self::BLS,
+            Payload::Hierarchical(_) => Self::Hierarchical,
         }
     }
 }
@@ -88,6 +101,7 @@ impl From<&Payload> for Protocol {
             Payload::Secp256k1(_) => Self::Secp256k1,
             Payload::Actor(_) => Self::Actor,
             Payload::BLS(_) => Self::BLS,
+            Payload::Hierarchical(_) => Self::BLS,
         }
     }
 }
