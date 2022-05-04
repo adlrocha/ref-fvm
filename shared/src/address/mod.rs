@@ -5,6 +5,7 @@ mod errors;
 mod network;
 mod payload;
 mod protocol;
+pub mod subnet;
 use std::borrow::Cow;
 use std::fmt;
 use std::hash::Hash;
@@ -20,6 +21,7 @@ pub use self::errors::Error;
 pub use self::network::Network;
 pub use self::payload::Payload;
 pub use self::protocol::Protocol;
+pub use self::subnet::SubnetID;
 use crate::ActorID;
 
 /// defines the encoder for base32 encoding with the provided string with no padding
@@ -54,7 +56,12 @@ lazy_static::lazy_static! {
 /// Length of the checksum hash for string encodings.
 pub const CHECKSUM_HASH_LEN: usize = 4;
 
-const MAX_ADDRESS_LEN: usize = 84 + 2;
+// NOTE: To accommodate consensus hierarchies of up to 6 levels in
+// hierarchical addresses we add an additional length buffer.
+// For the MVP we'll leave it like this, but in the future we may want to
+// support constant-length IDs for subnets, to allow us to set
+// this MaxLength accurately without worrying about overflows.
+const MAX_ADDRESS_LEN: usize = 84 + 2 + (4 * 6 + 6);
 const MAINNET_PREFIX: &str = "f";
 const TESTNET_PREFIX: &str = "t";
 
@@ -130,6 +137,61 @@ impl Address {
             network: NETWORK_DEFAULT,
             payload: Payload::BLS(key),
         })
+    }
+
+    /// Generates new hierarchical address
+    pub fn new_hierarchical(sn: &SubnetID, addr: &Address) -> Result<Self, Error> {
+        let str_payload = format!("{}::{}", sn.to_string(), addr.to_string());
+        let payload = str_payload.as_bytes();
+        let size_vec = to_leb_bytes(payload.len() as u64)?;
+        let size: &[u8] = size_vec.as_ref();
+        let sp = [size, payload].concat();
+        let mut key = [0u8; MAX_ADDRESS_LEN];
+        key[..sp.len()].copy_from_slice(sp.as_slice());
+        Ok(Self {
+            network: NETWORK_DEFAULT,
+            payload: Payload::Hierarchical(key),
+        })
+    }
+
+    // parses hierarchical into its parts
+    fn parse_hierarchical<'a>(&self, raw_p: &'a [u8]) -> Result<Vec<&'a str>, Error> {
+        // the maximum size for the MAX_LENGTH determined by an address required a single
+        // byte for its varint.
+        const VARINT_SIZE: usize = 1;
+        let size = from_leb_bytes(&raw_p[..VARINT_SIZE])
+            .map_err(|_| Error::InvalidHierarchicalAddr)? as usize;
+        let str_p = std::str::from_utf8(&raw_p[VARINT_SIZE..size + 1])
+            .map_err(|_| Error::InvalidHierarchicalAddr)?;
+        Ok(str_p.split("::").collect::<Vec<&str>>())
+    }
+
+    /// Returns the raw address of a hierarchical address (without subnet context)
+    pub fn raw_addr(&self) -> Result<Address, Error> {
+        if self.protocol() != Protocol::Hierarchical {
+            // if not a hierarchical address the address is in itself
+            // the raw address
+            return Ok(self.clone());
+        }
+
+        let raw_p = self.payload.to_raw_bytes();
+        let addr_str = self
+            .parse_hierarchical(&raw_p)
+            .map_err(|_| Error::InvalidHierarchicalAddr)?[1];
+        Address::from_str(addr_str)
+    }
+
+    /// Returns subnets of a hierarchical address
+    pub fn subnet(&self) -> Result<SubnetID, Error> {
+        if self.protocol() != Protocol::Hierarchical {
+            return Err(Error::InvalidHierarchicalAddr);
+        }
+
+        let raw_p = self.payload.to_raw_bytes();
+        let sub_str = self
+            .parse_hierarchical(&raw_p)
+            .map_err(|_| Error::InvalidHierarchicalAddr)?[0];
+        SubnetID::from_str(sub_str).map_err(|_| Error::InvalidHierarchicalAddr)
     }
 
     pub fn is_bls_zero_address(&self) -> bool {
@@ -213,6 +275,7 @@ impl FromStr for Address {
             "1" => Protocol::Secp256k1,
             "2" => Protocol::Actor,
             "3" => Protocol::BLS,
+            "4" => Protocol::Hierarchical,
             _ => {
                 return Err(Error::UnknownProtocol);
             }
@@ -285,7 +348,7 @@ impl<'de> Deserialize<'de> for Address {
 /// encode converts the address into a string
 fn encode(addr: &Address) -> String {
     match addr.protocol() {
-        Protocol::Secp256k1 | Protocol::Actor | Protocol::BLS => {
+        Protocol::Secp256k1 | Protocol::Actor | Protocol::BLS | Protocol::Hierarchical => {
             let ingest = addr.to_bytes();
             let mut bz = addr.payload_bytes();
 

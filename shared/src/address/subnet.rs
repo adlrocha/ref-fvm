@@ -1,0 +1,163 @@
+use std::fmt;
+use std::path::Path;
+use std::str::FromStr;
+
+use fvm_ipld_encoding::tuple::*;
+use fvm_ipld_encoding::Cbor;
+use lazy_static::lazy_static;
+use thiserror::Error;
+
+use crate::address::Address;
+
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize_tuple, Deserialize_tuple)]
+pub struct SubnetID {
+    parent: String,
+    actor: Address,
+}
+impl Cbor for SubnetID {}
+
+lazy_static! {
+    pub static ref ROOTNET_ID: SubnetID = SubnetID {
+        parent: String::from("/root"),
+        actor: Address::new_id(0)
+    };
+}
+
+#[derive(Debug, PartialEq, Error)]
+pub enum Error {
+    #[error("invalid subnet id")]
+    InvalidID,
+}
+
+impl SubnetID {
+    pub fn new(parent: &SubnetID, subnet_act: Address) -> SubnetID {
+        let parent_str = parent.to_string();
+
+        return SubnetID {
+            parent: parent_str,
+            actor: subnet_act,
+        };
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let str_id = self.to_string();
+        str_id.into_bytes()
+    }
+
+    pub fn subnet_actor(&self) -> Address {
+        self.actor
+    }
+
+    pub fn parent(&self) -> Option<SubnetID> {
+        if *self == *ROOTNET_ID {
+            return None;
+        }
+        match SubnetID::from_str(&self.parent) {
+            Ok(id) => Some(id),
+            Err(_) => None,
+        }
+    }
+
+    // pub fn common_parent(other: &SubnetID) -> Result<SubnetID, Error> {
+    //     panic!("not implemented")
+    // }
+    // pub fn down(other: &SubnetID) -> Result<SubnetID, Error> {
+    //     panic!("not implemented")
+    // }
+    // pub fn up(other: &SubnetID) -> Result<SubnetID, Error> {
+    //     panic!("not implemented")
+    // }
+}
+
+impl fmt::Display for SubnetID {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.parent == "/root" && self.actor == Address::new_id(0) {
+            return write!(f, "{}", self.parent);
+        }
+        let act_str = self.actor.to_string();
+        match Path::join(Path::new(&self.parent), Path::new(&act_str)).to_str() {
+            Some(r) => write!(f, "{}", r),
+            None => Err(fmt::Error),
+        }
+    }
+}
+
+impl Default for SubnetID {
+    fn default() -> Self {
+        Self {
+            parent: String::from(""),
+            actor: Address::new_id(0),
+        }
+    }
+}
+
+impl FromStr for SubnetID {
+    type Err = Error;
+    fn from_str(addr: &str) -> Result<Self, Error> {
+        if addr == ROOTNET_ID.to_string() {
+            return Ok(ROOTNET_ID.clone());
+        }
+
+        let id = Path::new(addr);
+        let act = match Path::file_name(id) {
+            Some(act_str) => Address::from_str(act_str.to_str().unwrap_or("")),
+            None => return Err(Error::InvalidID),
+        };
+
+        let mut anc = id.ancestors();
+        _ = anc.next();
+        let par = match anc.next() {
+            Some(par_str) => par_str.to_str(),
+            None => return Err(Error::InvalidID),
+        }
+        .ok_or(Error::InvalidID)
+        .unwrap();
+
+        Ok(Self {
+            parent: String::from(par),
+            actor: match act {
+                Ok(addr) => addr,
+                Err(_) => return Err(Error::InvalidID),
+            },
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::address::subnet::*;
+    use crate::address::{Address, Error};
+
+    #[test]
+    fn test_subnet_id() {
+        let act = Address::new_id(1001);
+        let sub_id = SubnetID::new(&ROOTNET_ID.clone(), act);
+        let sub_id_str = sub_id.to_string();
+        assert_eq!(sub_id_str, "/root/f01001");
+
+        let rtt_id = SubnetID::from_str(&sub_id_str).unwrap();
+        assert_eq!(sub_id, rtt_id);
+
+        let rootnet = ROOTNET_ID.clone();
+        assert_eq!(rootnet.to_string(), "/root");
+        let root_sub = SubnetID::from_str(&rootnet.to_string()).unwrap();
+        assert_eq!(root_sub, rootnet);
+    }
+
+    #[test]
+    fn test_hierarchical_address() {
+        let act = Address::new_id(1001);
+        let sub_id = SubnetID::new(&ROOTNET_ID.clone(), act);
+        let bls = Address::from_str("f3vvmn62lofvhjd2ugzca6sof2j2ubwok6cj4xxbfzz4yuxfkgobpihhd2thlanmsh3w2ptld2gqkn2jvlss4a").unwrap();
+        let haddr = Address::new_hierarchical(&sub_id, &bls).unwrap();
+
+        assert_eq!(Address::raw_addr(&haddr).unwrap(), bls);
+        assert_eq!(Address::subnet(&haddr).unwrap(), sub_id);
+        assert_eq!(Address::raw_addr(&bls).unwrap(), bls);
+
+        match Address::subnet(&bls) {
+            Err(e) => assert_eq!(e, Error::InvalidHierarchicalAddr),
+            _ => panic!("subnet over non-hierarchical address should have failed"),
+        }
+    }
+}
