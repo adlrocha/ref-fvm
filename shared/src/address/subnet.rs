@@ -62,28 +62,30 @@ impl SubnetID {
 
     /// Computes the common parent of the current subnet and the one given
     /// as argument
-    pub fn common_parent(&self, other: &SubnetID) -> Option<SubnetID> {
+    pub fn common_parent(&self, other: &SubnetID) -> Option<(usize, SubnetID)> {
         let a = self.to_string();
         let b = other.to_string();
         let a = Path::new(&a).components();
         let b = Path::new(&b).components();
         let mut ret = PathBuf::new();
         let mut found = false;
-        for (one, two) in a.zip(b) {
+        let mut index = 0;
+        for (i, (one, two)) in a.zip(b).enumerate() {
             if one == two {
                 ret.push(one);
                 found = true;
+                index = i;
             } else {
                 break;
             }
         }
         if found {
             return match SubnetID::from_str(&ret.to_str()?) {
-                Ok(p) => Some(p),
+                Ok(p) => Some((index, p)),
                 Err(_) => None,
             };
         }
-        Some(ROOTNET_ID.clone())
+        Some((index, ROOTNET_ID.clone()))
     }
 
     /// In the path determined by the current subnet id, it moves
@@ -251,19 +253,21 @@ mod tests {
 
     #[test]
     fn test_common_parent() {
-        common_parent("/root/f01", "/root/f01/f02", "/root/f01");
-        common_parent("/root/f01/f02/f03", "/root/f01/f02", "/root/f01/f02");
-        common_parent("/root/f01/f03/f04", "/root/f02/f03/f04", "/root");
+        common_parent("/root/f01", "/root/f01/f02", "/root/f01", 2);
+        common_parent("/root/f01/f02/f03", "/root/f01/f02", "/root/f01/f02", 3);
+        common_parent("/root/f01/f03/f04", "/root/f02/f03/f04", "/root", 1);
         common_parent(
             "/root/f01/f03/f04",
             "/root/f01/f03/f04/f05",
             "/root/f01/f03/f04",
+            4,
         );
         // The common parent of the same subnet is the current subnet
         common_parent(
             "/root/f01/f03/f04",
             "/root/f01/f03/f04",
             "/root/f01/f03/f04",
+            4,
         );
     }
 
@@ -316,11 +320,11 @@ mod tests {
         );
     }
 
-    fn common_parent(a: &str, b: &str, res: &str) {
+    fn common_parent(a: &str, b: &str, res: &str, index: usize) {
         let id = SubnetID::from_str(a).unwrap();
         assert_eq!(
             id.common_parent(&SubnetID::from_str(b).unwrap()).unwrap(),
-            SubnetID::from_str(res).unwrap()
+            (index, SubnetID::from_str(res).unwrap()),
         );
     }
 
