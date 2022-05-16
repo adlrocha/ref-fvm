@@ -37,10 +37,6 @@ pub mod init_actor;
 #[cfg(feature = "testing")]
 pub mod system_actor;
 
-mod market_actor;
-mod power_actor;
-mod reward_actor;
-
 pub mod trace;
 
 use cid::multihash::{Code, MultihashDigest};
@@ -119,11 +115,13 @@ mod test {
 
         let actors_cid = bs.put_cbor(&(0, manifest_cid), Code::Blake2b256).unwrap();
 
+        let mc = NetworkConfig::new(fvm_shared::version::NetworkVersion::V15)
+            .override_actors(actors_cid)
+            .for_epoch(0, root);
+
         let machine = DefaultMachine::new(
-            &Engine::default(),
-            &NetworkConfig::new(fvm_shared::version::NetworkVersion::V14)
-                .override_actors(actors_cid)
-                .for_epoch(0, root),
+            &Engine::new_default((&mc.network).into()).unwrap(),
+            &mc,
             bs,
             DummyExterns,
         )

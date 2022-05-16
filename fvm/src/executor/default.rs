@@ -11,11 +11,12 @@ use fvm_shared::error::{ErrorNumber, ExitCode};
 use fvm_shared::message::Message;
 use fvm_shared::receipt::Receipt;
 use fvm_shared::ActorID;
+use lazy_static::lazy_static;
 use num_traits::Zero;
 
 use super::{ApplyFailure, ApplyKind, ApplyRet, Executor};
 use crate::call_manager::{backtrace, CallManager, InvocationResult};
-use crate::gas::{GasCharge, GasOutputs};
+use crate::gas::{Gas, GasCharge, GasOutputs};
 use crate::kernel::{ClassifyResult, Context as _, ExecutionError, Kernel};
 use crate::machine::{Machine, BURNT_FUNDS_ACTOR_ADDR, REWARD_ACTOR_ADDR};
 
@@ -38,14 +39,49 @@ impl<K: Kernel> DerefMut for DefaultExecutor<K> {
     }
 }
 
+lazy_static! {
+    static ref EXEC_POOL: yastl::Pool = yastl::Pool::with_config(
+        8,
+        yastl::ThreadConfig::new()
+            .prefix("fvm-executor")
+            // fvm needs more than the deafault available stack (2MiB):
+            // - Max 2048 wasm stack elements, which is 16KiB of 64bit entries
+            // - Roughly 20KiB overhead per actor call
+            // - max 1024 nested calls, which means that in the worst case we need ~36MiB of stack
+            // We also want some more space just to be conservative, so 64MiB seems like a reasonable choice
+            .stack_size(64 << 20),
+    );
+}
+
 impl<K> Executor for DefaultExecutor<K>
 where
     K: Kernel,
+    <K::CallManager as CallManager>::Machine: Send,
 {
     type Kernel = K;
 
     /// This is the entrypoint to execute a message.
     fn execute_message(
+        &mut self,
+        msg: Message,
+        apply_kind: ApplyKind,
+        raw_length: usize,
+    ) -> anyhow::Result<ApplyRet> {
+        let mut ret = Err(anyhow!("failed to execute"));
+
+        EXEC_POOL.scoped(|scope| {
+            scope.execute(|| ret = self.execute_message_inner(msg, apply_kind, raw_length));
+        });
+
+        ret
+    }
+}
+
+impl<K> DefaultExecutor<K>
+where
+    K: Kernel,
+{
+    fn execute_message_inner(
         &mut self,
         msg: Message,
         apply_kind: ApplyKind,
@@ -130,22 +166,36 @@ where
                     ErrorNumber::Forbidden => ExitCode::SYS_ASSERTION_FAILED,
                 };
 
-                backtrace.set_cause(backtrace::Cause::new("send", "send", err));
+                backtrace.begin(backtrace::Cause::from_syscall("send", "send", err));
                 Receipt {
                     exit_code,
                     return_data: Default::default(),
                     gas_used,
                 }
             }
-            Err(ExecutionError::Fatal(e)) => {
-                return Err(e.context(format!(
-                    "[from={}, to={}, seq={}, m={}, h={}] fatal error",
+            Err(ExecutionError::Fatal(err)) => {
+                // We produce a receipt with SYS_ASSERTION_FAILED exit code, and
+                // we consume the full gas amount so that, in case of a network-
+                // wide fatal errors, all nodes behave deterministically.
+                //
+                // We set the backtrace from the fatal error to aid diagnosis.
+                // Note that we use backtrace#set_cause instead of backtrace#begin
+                // because we want to retain the propagation chain that we've
+                // accumulated on the way out.
+                let err = err.context(format!(
+                    "[from={}, to={}, seq={}, m={}, h={}]",
                     msg.from,
                     msg.to,
                     msg.sequence,
                     msg.method_num,
-                    self.context().epoch
-                )));
+                    self.context().epoch,
+                ));
+                backtrace.set_cause(backtrace::Cause::from_fatal(err));
+                Receipt {
+                    exit_code: ExitCode::SYS_ASSERTION_FAILED,
+                    return_data: Default::default(),
+                    gas_used: msg.gas_limit,
+                }
             }
         };
 
@@ -164,19 +214,19 @@ where
                 }),
             ApplyKind::Implicit => Ok(ApplyRet {
                 msg_receipt: receipt,
-                failure_info,
                 penalty: TokenAmount::zero(),
                 miner_tip: TokenAmount::zero(),
+                base_fee_burn: TokenAmount::from(0),
+                over_estimation_burn: TokenAmount::from(0),
+                refund: TokenAmount::from(0),
+                gas_refund: 0,
+                gas_burned: 0,
+                failure_info,
                 exec_trace,
             }),
         }
     }
-}
 
-impl<K> DefaultExecutor<K>
-where
-    K: Kernel,
-{
     /// Create a new [`DefaultExecutor`] for executing messages on the [`Machine`].
     pub fn new(m: <K::CallManager as CallManager>::Machine) -> Self {
         Self(Some(m))
@@ -212,10 +262,13 @@ where
         let pl = &self.context().price_list;
 
         let (inclusion_cost, miner_penalty_amount) = match apply_kind {
-            ApplyKind::Implicit => (GasCharge::new("none", 0, 0), Default::default()),
+            ApplyKind::Implicit => (
+                GasCharge::new("none", Gas::zero(), Gas::zero()),
+                Default::default(),
+            ),
             ApplyKind::Explicit => {
                 let inclusion_cost = pl.on_chain_message(raw_length);
-                let inclusion_total = inclusion_cost.total();
+                let inclusion_total = inclusion_cost.total().round_up();
 
                 // Verify the cost of the message is not over the message gas limit.
                 if inclusion_total > msg.gas_limit {
@@ -326,11 +379,12 @@ where
         // NOTE: we don't support old network versions in the FVM, so we always burn.
         let GasOutputs {
             base_fee_burn,
-            miner_tip,
             over_estimation_burn,
-            refund,
             miner_penalty,
-            ..
+            miner_tip,
+            refund,
+            gas_refund,
+            gas_burned,
         } = GasOutputs::compute(
             receipt.gas_used,
             msg.gas_limit,
@@ -365,15 +419,20 @@ where
         // refund unused gas
         transfer_to_actor(&msg.from, &refund)?;
 
-        if (&base_fee_burn + over_estimation_burn + &refund + &miner_tip) != gas_cost {
+        if (&base_fee_burn + &over_estimation_burn + &refund + &miner_tip) != gas_cost {
             // Sanity check. This could be a fatal error.
             return Err(anyhow!("Gas handling math is wrong"));
         }
         Ok(ApplyRet {
             msg_receipt: receipt,
-            failure_info,
             penalty: miner_penalty,
             miner_tip,
+            base_fee_burn,
+            over_estimation_burn,
+            refund,
+            gas_refund,
+            gas_burned,
+            failure_info,
             exec_trace: vec![],
         })
     }
