@@ -84,8 +84,8 @@ impl TryFrom<&str> for Type {
             "multisig" => Type::Multisig,
             "reward" => Type::Reward,
             "verifiedregistry" => Type::VerifiedRegistry,
-            "sca" => Type::SCA,
-            "subnet" => Type::Subnet,
+            "hierarchical_sca" => Type::SCA,
+            "hierarchical_subnet" => Type::Subnet,
             _ => return Err(String::from("unrecognized actor type")),
         };
         Ok(ret)

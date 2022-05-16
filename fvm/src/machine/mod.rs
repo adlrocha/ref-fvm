@@ -20,7 +20,7 @@ pub use default::DefaultMachine;
 
 mod engine;
 
-pub use engine::Engine;
+pub use engine::{Engine, MultiEngine};
 
 mod boxed;
 
@@ -98,6 +98,10 @@ pub struct NetworkConfig {
     /// DEFAULT: 4096
     pub max_call_depth: u32,
 
+    /// The maximum number of elements on wasm stack
+    /// DEFAULT: 64Ki (512KiB of u64 elements)
+    pub max_wasm_stack: u32,
+
     /// An override for builtin-actors. If specified, this should be the CID of a builtin-actors
     /// "manifest".
     ///
@@ -120,7 +124,8 @@ impl NetworkConfig {
     pub fn new(network_version: NetworkVersion) -> Self {
         NetworkConfig {
             network_version,
-            max_call_depth: 4096,
+            max_call_depth: 1024,
+            max_wasm_stack: 2048,
             actor_debugging: false,
             builtin_actors_override: None,
             price_list: price_list_by_network_version(network_version),
