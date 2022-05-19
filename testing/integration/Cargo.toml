@@ -6,16 +6,15 @@ edition = "2021"
 repository = "https://github.com/filecoin-project/ref-fvm"
 
 [dependencies]
-fvm = { version = "0.7.2", path = "../../fvm", default-features = false }
-fvm_shared = { version = "0.6.1", path = "../../shared" }
+fvm = { version = "0.8.0", path = "../../fvm", default-features = false }
+fvm_shared = { version = "0.7.0", path = "../../shared" }
 fvm_ipld_hamt = { version = "0.5.1", path = "../../ipld/hamt"}
 fvm_ipld_amt = { version = "0.4.1", path = "../../ipld/amt"}
 fvm_ipld_car = { version = "0.4.1", path = "../../ipld/car" }
-fvm_ipld_blockstore = { version = "0.1.0", path = "../../ipld/blockstore" }
+fvm_ipld_blockstore = { version = "0.1.1", path = "../../ipld/blockstore" }
 fvm_ipld_encoding = { version = "0.2.0", path = "../../ipld/encoding" }
 
-actors-v6 = { version = "6.1.1", package = "fil_builtin_actors_bundle" }
-actors-v7 = { version = "7.1.2", package = "fil_builtin_actors_bundle" }
+actors-v7 = { version = "~7.4", package = "fil_builtin_actors_bundle" }
 anyhow = "1.0.47"
 cid = { version = "0.8.2", default-features = false }
 futures = "0.3.19"
@@ -31,7 +30,7 @@ serde_repr = "0.1"
 thiserror = "1.0.30"
 
 [dependencies.wasmtime]
-version = "0.35.2"
+version = "0.36.0"
 default-features = false
 features = ["cranelift", "pooling-allocator", "parallel-compilation"]
 

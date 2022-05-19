@@ -1,7 +1,9 @@
 mod default;
+mod threaded;
 
 use std::fmt::Display;
 
+use cid::Cid;
 pub use default::DefaultExecutor;
 use fvm_ipld_encoding::RawBytes;
 use fvm_shared::bigint::{BigInt, Sign};
@@ -10,6 +12,7 @@ use fvm_shared::error::ExitCode;
 use fvm_shared::message::Message;
 use fvm_shared::receipt::Receipt;
 use num_traits::Zero;
+pub use threaded::ThreadedExecutor;
 
 use crate::call_manager::Backtrace;
 use crate::trace::ExecutionTrace;
@@ -36,6 +39,9 @@ pub trait Executor {
         apply_kind: ApplyKind,
         raw_length: usize,
     ) -> anyhow::Result<ApplyRet>;
+
+    /// Flushes the state-tree, returning the new root CID.
+    fn flush(&mut self) -> anyhow::Result<Cid>;
 }
 
 /// A description of some failure encountered when applying a message.

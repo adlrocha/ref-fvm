@@ -3,6 +3,7 @@ use std::result::Result as StdResult;
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
+use fvm_ipld_encoding::{RawBytes, DAG_CBOR};
 use fvm_shared::actor::builtin::Type;
 use fvm_shared::address::Address;
 use fvm_shared::bigint::{BigInt, Sign};
@@ -11,16 +12,21 @@ use fvm_shared::error::{ErrorNumber, ExitCode};
 use fvm_shared::message::Message;
 use fvm_shared::receipt::Receipt;
 use fvm_shared::ActorID;
-use lazy_static::lazy_static;
 use num_traits::Zero;
 
 use super::{ApplyFailure, ApplyKind, ApplyRet, Executor};
 use crate::call_manager::{backtrace, CallManager, InvocationResult};
 use crate::gas::{Gas, GasCharge, GasOutputs};
-use crate::kernel::{ClassifyResult, Context as _, ExecutionError, Kernel};
+use crate::kernel::{Block, ClassifyResult, Context as _, ExecutionError, Kernel};
 use crate::machine::{Machine, BURNT_FUNDS_ACTOR_ADDR, REWARD_ACTOR_ADDR};
 
 /// The default [`Executor`].
+///
+/// # Warning
+///
+/// Message execution might run out of stack and crash (the entire process) if it doesn't have at
+/// least 64MiB of stacks space. If you can't guarantee 64MiB of stack space, wrap this executor in
+/// a [`ThreadedExecutor`][super::ThreadedExecutor].
 // If the inner value is `None` it means the machine got poisoned and is unusable.
 #[repr(transparent)]
 pub struct DefaultExecutor<K: Kernel>(Option<<K::CallManager as CallManager>::Machine>);
@@ -39,49 +45,14 @@ impl<K: Kernel> DerefMut for DefaultExecutor<K> {
     }
 }
 
-lazy_static! {
-    static ref EXEC_POOL: yastl::Pool = yastl::Pool::with_config(
-        8,
-        yastl::ThreadConfig::new()
-            .prefix("fvm-executor")
-            // fvm needs more than the deafault available stack (2MiB):
-            // - Max 2048 wasm stack elements, which is 16KiB of 64bit entries
-            // - Roughly 20KiB overhead per actor call
-            // - max 1024 nested calls, which means that in the worst case we need ~36MiB of stack
-            // We also want some more space just to be conservative, so 64MiB seems like a reasonable choice
-            .stack_size(64 << 20),
-    );
-}
-
 impl<K> Executor for DefaultExecutor<K>
 where
     K: Kernel,
-    <K::CallManager as CallManager>::Machine: Send,
 {
     type Kernel = K;
 
     /// This is the entrypoint to execute a message.
     fn execute_message(
-        &mut self,
-        msg: Message,
-        apply_kind: ApplyKind,
-        raw_length: usize,
-    ) -> anyhow::Result<ApplyRet> {
-        let mut ret = Err(anyhow!("failed to execute"));
-
-        EXEC_POOL.scoped(|scope| {
-            scope.execute(|| ret = self.execute_message_inner(msg, apply_kind, raw_length));
-        });
-
-        ret
-    }
-}
-
-impl<K> DefaultExecutor<K>
-where
-    K: Kernel,
-{
-    fn execute_message_inner(
         &mut self,
         msg: Message,
         apply_kind: ApplyKind,
@@ -103,14 +74,21 @@ where
                 return (Err(e), cm.finish().1);
             }
 
+            let params = if msg.params.is_empty() {
+                None
+            } else {
+                Some(Block::new(DAG_CBOR, msg.params.bytes()))
+            };
+
             let result = cm.with_transaction(|cm| {
                 // Invoke the message.
-                let ret =
-                    cm.send::<K>(sender_id, msg.to, msg.method_num, &msg.params, &msg.value)?;
+                let ret = cm.send::<K>(sender_id, msg.to, msg.method_num, params, &msg.value)?;
 
                 // Charge for including the result (before we end the transaction).
-                if let InvocationResult::Return(data) = &ret {
-                    cm.charge_gas(cm.context().price_list.on_chain_return_value(data.len()))?;
+                if let InvocationResult::Return(value) = &ret {
+                    cm.charge_gas(cm.context().price_list.on_chain_return_value(
+                        value.as_ref().map(|v| v.size() as usize).unwrap_or(0),
+                    ))?;
                 }
 
                 Ok(ret)
@@ -124,7 +102,13 @@ where
 
         // Extract the exit code and build the result of the message application.
         let receipt = match res {
-            Ok(InvocationResult::Return(return_data)) => {
+            Ok(InvocationResult::Return(return_value)) => {
+                // Convert back into a top-level return "value". We throw away the codec here,
+                // unfortunately.
+                let return_data = return_value
+                    .map(|blk| RawBytes::from(blk.data().to_vec()))
+                    .unwrap_or_default();
+
                 backtrace.clear();
                 Receipt {
                     exit_code: ExitCode::OK,
@@ -154,16 +138,7 @@ where
                 let exit_code = match err.1 {
                     ErrorNumber::InsufficientFunds => ExitCode::SYS_INSUFFICIENT_FUNDS,
                     ErrorNumber::NotFound => ExitCode::SYS_INVALID_RECEIVER,
-
-                    ErrorNumber::IllegalArgument => ExitCode::SYS_ASSERTION_FAILED,
-                    ErrorNumber::IllegalOperation => ExitCode::SYS_ASSERTION_FAILED,
-                    ErrorNumber::LimitExceeded => ExitCode::SYS_ASSERTION_FAILED,
-                    ErrorNumber::AssertionFailed => ExitCode::SYS_ASSERTION_FAILED,
-                    ErrorNumber::InvalidHandle => ExitCode::SYS_ASSERTION_FAILED,
-                    ErrorNumber::IllegalCid => ExitCode::SYS_ASSERTION_FAILED,
-                    ErrorNumber::IllegalCodec => ExitCode::SYS_ASSERTION_FAILED,
-                    ErrorNumber::Serialization => ExitCode::SYS_ASSERTION_FAILED,
-                    ErrorNumber::Forbidden => ExitCode::SYS_ASSERTION_FAILED,
+                    _ => ExitCode::SYS_ASSERTION_FAILED,
                 };
 
                 backtrace.begin(backtrace::Cause::from_syscall("send", "send", err));
@@ -227,15 +202,20 @@ where
         }
     }
 
+    /// Flush the state-tree to the underlying blockstore.
+    fn flush(&mut self) -> anyhow::Result<Cid> {
+        let k = (&mut **self).flush()?;
+        Ok(k)
+    }
+}
+
+impl<K> DefaultExecutor<K>
+where
+    K: Kernel,
+{
     /// Create a new [`DefaultExecutor`] for executing messages on the [`Machine`].
     pub fn new(m: <K::CallManager as CallManager>::Machine) -> Self {
         Self(Some(m))
-    }
-
-    /// Flush the state-tree to the underlying blockstore.
-    pub fn flush(&mut self) -> anyhow::Result<Cid> {
-        let k = (&mut **self).flush()?;
-        Ok(k)
     }
 
     /// Consume consumes the executor and returns the Machine. If the Machine had
