@@ -31,12 +31,10 @@ pub enum Error {
 
 impl SubnetID {
     pub fn new(parent: &SubnetID, subnet_act: Address) -> SubnetID {
-        let parent_str = parent.to_string();
-
-        return SubnetID {
-            parent: parent_str,
+        SubnetID {
+            parent: parent.to_string(),
             actor: subnet_act,
-        };
+        }
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -80,7 +78,7 @@ impl SubnetID {
             }
         }
         if found {
-            return match SubnetID::from_str(&ret.to_str()?) {
+            return match SubnetID::from_str(ret.to_str()?) {
                 Ok(p) => Some((index, p)),
                 Err(_) => None,
             };
@@ -150,7 +148,7 @@ impl SubnetID {
         if found && cl_b.nth(index + 1) == None {
             // pop to go up
             ret.pop();
-            return match SubnetID::from_str(&ret.to_str()?) {
+            return match SubnetID::from_str(ret.to_str()?) {
                 Ok(p) => Some(p),
                 Err(_) => None,
             };
@@ -164,8 +162,12 @@ impl fmt::Display for SubnetID {
         if self.parent == "/root" && self.actor == Address::new_id(0) {
             return write!(f, "{}", self.parent);
         }
-        let act_str = self.actor.to_string();
-        match Path::join(Path::new(&self.parent), Path::new(&act_str)).to_str() {
+        match Path::join(
+            Path::new(&self.parent),
+            Path::new(&format!("{}", self.actor)),
+        )
+        .to_str()
+        {
             Some(r) => write!(f, "{}", r),
             None => Err(fmt::Error),
         }
