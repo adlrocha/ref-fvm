@@ -111,7 +111,7 @@ impl SubnetID {
         // the from needs to be a subset of the current subnet id
         if found && cl_b.nth(index + 1) == None {
             ret.push(cl_a.nth(index + 1)?);
-            return match SubnetID::from_str(&ret.to_str()?) {
+            return match SubnetID::from_str(ret.to_str()?) {
                 Ok(p) => Some(p),
                 Err(_) => None,
             };
@@ -126,9 +126,9 @@ impl SubnetID {
         if self == &*ROOTNET_ID || from == &*ROOTNET_ID {
             return None;
         }
-        let a = self.to_string();
+        let a = format!("{}", self);
         let a = Path::new(&a).components();
-        let b = from.to_string();
+        let b = format!("{}", from);
         let b = Path::new(&b).components();
         let mut cl_b = b.clone();
         let mut ret = PathBuf::new();
