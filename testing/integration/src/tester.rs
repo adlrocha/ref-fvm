@@ -208,6 +208,36 @@ where
         }
     }
 
+    pub fn make_id_account(&mut self, id: u64, init_balance: TokenAmount) -> Result<Account> {
+        use rand::SeedableRng;
+        let rng = &mut rand_chacha::ChaCha8Rng::seed_from_u64(8);
+        let priv_key = SecretKey::random(rng);
+        let pub_key = PublicKey::from_secret_key(&priv_key);
+        let pub_key_addr = Address::new_secp256k1(&pub_key.serialize())?;
+
+        let state_tree = self
+            .state_tree
+            .as_mut()
+            .ok_or_else(|| anyhow!("unable get state tree"))?;
+        let state = fvm::account_actor::State {
+            address: pub_key_addr,
+        };
+
+        let cid = state_tree.store().put_cbor(&state, Code::Blake2b256)?;
+
+        let actor_state = ActorState {
+            code: self.accounts_code_cid,
+            state: cid,
+            sequence: 0,
+            balance: init_balance,
+        };
+
+        state_tree
+            .set_actor(&Address::new_id(id), actor_state)
+            .map_err(anyhow::Error::from)?;
+        Ok((id, pub_key_addr))
+    }
+
     /// Put account with specified private key and balance
     pub fn make_secp256k1_account(
         &mut self,
