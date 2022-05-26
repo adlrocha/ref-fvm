@@ -107,10 +107,7 @@ where
         let mut ret: [Account; N] = [(0, Address::default()); N];
         for account in ret.iter_mut().take(N) {
             let priv_key = SecretKey::random(rng);
-            *account = self.make_secp256k1_account(
-                priv_key,
-                TokenAmount::from(10u8) * TokenAmount::from(1000),
-            )?;
+            *account = self.make_secp256k1_account(priv_key, TokenAmount::from(10u128.pow(20)))?;
         }
         Ok(ret)
     }
