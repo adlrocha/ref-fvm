@@ -30,7 +30,7 @@ pub trait Store: Blockstore + Sized + 'static {}
 pub type IntegrationExecutor<B> =
     DefaultExecutor<DefaultKernel<DefaultCallManager<DefaultMachine<B, DummyExterns>>>>;
 
-pub type Account = (ActorID, Address);
+pub type Account = (ActorID, Address, SecretKey);
 
 pub struct Tester<B: Blockstore + 'static> {
     // Network version used in the test
@@ -104,7 +104,7 @@ where
 
         let rng = &mut rand_chacha::ChaCha8Rng::seed_from_u64(8);
 
-        let mut ret: [Account; N] = [(0, Address::default()); N];
+        let mut ret: [Account; N] = [(0, Address::default(), SecretKey::default()); N];
         for account in ret.iter_mut().take(N) {
             let priv_key = SecretKey::random(rng);
             *account = self.make_secp256k1_account(priv_key, TokenAmount::from(10u128.pow(20)))?;
@@ -232,7 +232,7 @@ where
         state_tree
             .set_actor(&Address::new_id(id), actor_state)
             .map_err(anyhow::Error::from)?;
-        Ok((id, pub_key_addr))
+        Ok((id, pub_key_addr, SecretKey::default()))
     }
 
     /// Put account with specified private key and balance
@@ -265,7 +265,7 @@ where
         state_tree
             .set_actor(&Address::new_id(assigned_addr), actor_state)
             .map_err(anyhow::Error::from)?;
-        Ok((assigned_addr, pub_key_addr))
+        Ok((assigned_addr, pub_key_addr, priv_key))
     }
 }
 /// Inserts the WASM code for the actor into the blockstore.

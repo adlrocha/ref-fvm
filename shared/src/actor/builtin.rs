@@ -106,7 +106,7 @@ impl From<&Type> for String {
             Type::Multisig => "multisig",
             Type::Reward => "reward",
             Type::VerifiedRegistry => "verifiedregistry",
-            Type::SCA => "sca",
+            Type::SCA => "hierarchical_sca",
             Type::Subnet => "subnet",
         }
         .to_string()
