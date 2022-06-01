@@ -95,4 +95,7 @@ super::fvm_syscalls! {
     /// **Privledged:** May only be called by the init actor.
     #[doc(hidden)]
     pub fn create_actor(actor_id: u64, typ_off: *const u8) -> Result<()>;
+
+    /// Installs/Ensures actor code is valid and loaded.
+    pub fn install_actor(cid_off: *const u8) -> Result<()>;
 }
