@@ -21,7 +21,6 @@ pub enum Payload {
     /// BLS key address, full 48 byte public key
     BLS([u8; BLS_PUB_LEN]),
     /// Hierarchical address. Up to 64 bytes long
-    // FIXME: We should make it dyncamic or longer?
     Hierarchical([u8; MAX_ADDRESS_LEN]),
 }
 
@@ -101,7 +100,7 @@ impl From<&Payload> for Protocol {
             Payload::Secp256k1(_) => Self::Secp256k1,
             Payload::Actor(_) => Self::Actor,
             Payload::BLS(_) => Self::BLS,
-            Payload::Hierarchical(_) => Self::BLS,
+            Payload::Hierarchical(_) => Self::Hierarchical,
         }
     }
 }

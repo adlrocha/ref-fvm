@@ -21,6 +21,10 @@ lazy_static! {
         parent: String::from("/root"),
         actor: Address::new_id(0)
     };
+    pub static ref UNDEF: SubnetID = SubnetID {
+        parent: String::from("/"),
+        actor: Address::new_id(0)
+    };
 }
 
 #[derive(Debug, PartialEq, Error)]
@@ -56,6 +60,15 @@ impl SubnetID {
             Ok(id) => Some(id),
             Err(_) => None,
         }
+    }
+
+    pub fn levels(&self) -> usize {
+        let a = self.to_string();
+        let mut size: usize = 0;
+        for _ in Path::new(&a).components() {
+            size += 1
+        }
+        size
     }
 
     /// Computes the common parent of the current subnet and the one given

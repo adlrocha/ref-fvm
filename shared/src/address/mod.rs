@@ -56,12 +56,11 @@ lazy_static::lazy_static! {
 /// Length of the checksum hash for string encodings.
 pub const CHECKSUM_HASH_LEN: usize = 4;
 
-// NOTE: To accommodate consensus hierarchies of up to 6 levels in
-// hierarchical addresses we add an additional length buffer.
-// For the MVP we'll leave it like this, but in the future we may want to
-// support constant-length IDs for subnets, to allow us to set
-// this MaxLength accurately without worrying about overflows.
-const MAX_ADDRESS_LEN: usize = 84 + 2 + (4 * 6 + 6);
+const MAX_ADDRESS_LEN: usize = 140;
+const HA_ROOT_LEN: usize = 5;
+const HA_LEVEL_LEN: usize = 23;
+const HA_SEPARATOR: &str = ":";
+const HA_END: &str = ",";
 const MAINNET_PREFIX: &str = "f";
 const TESTNET_PREFIX: &str = "t";
 
@@ -141,13 +140,19 @@ impl Address {
 
     /// Generates new hierarchical address
     pub fn new_hierarchical(sn: &SubnetID, addr: &Address) -> Result<Self, Error> {
-        let str_payload = format!("{}::{}", sn.to_string(), addr.to_string());
+        // format the payload
+        let str_payload = format!("{}:{}", sn.to_string(), addr.to_string());
         let payload = str_payload.as_bytes();
-        let size_vec = to_leb_bytes(payload.len() as u64)?;
+        // add prefix with the number of levels in subnetID
+        let levels = sn.levels();
+        let size_vec = to_leb_bytes(levels as u64)?;
         let size: &[u8] = size_vec.as_ref();
         let sp = [size, payload].concat();
+        // include in fixed-length container
         let mut key = [0u8; MAX_ADDRESS_LEN];
         key[..sp.len()].copy_from_slice(sp.as_slice());
+        // Add end character
+        key[sp.len()] = HA_END.as_bytes()[0];
         Ok(Self {
             network: NETWORK_DEFAULT,
             payload: Payload::Hierarchical(key),
@@ -156,14 +161,9 @@ impl Address {
 
     // parses hierarchical into its parts
     fn parse_hierarchical<'a>(&self, raw_p: &'a [u8]) -> Result<Vec<&'a str>, Error> {
-        // the maximum size for the MAX_LENGTH determined by an address required a single
-        // byte for its varint.
-        const VARINT_SIZE: usize = 1;
-        let size = from_leb_bytes(&raw_p[..VARINT_SIZE])
-            .map_err(|_| Error::InvalidHierarchicalAddr)? as usize;
-        let str_p = std::str::from_utf8(&raw_p[VARINT_SIZE..size + 1])
-            .map_err(|_| Error::InvalidHierarchicalAddr)?;
-        Ok(str_p.split("::").collect::<Vec<&str>>())
+        let str_p = std::str::from_utf8(&raw_p[1..]).map_err(|_| Error::InvalidHierarchicalAddr)?;
+        let raw = str_p.split(HA_END).collect::<Vec<&str>>()[0];
+        Ok(raw.split(HA_SEPARATOR).collect::<Vec<&str>>())
     }
 
     /// Returns the raw address of a hierarchical address (without subnet context)
@@ -312,6 +312,10 @@ impl FromStr for Address {
             return Err(Error::InvalidPayload);
         }
 
+        if protocol == Protocol::Hierarchical {
+            payload.resize(MAX_ADDRESS_LEN, 0);
+        }
+
         // validate checksum
         let mut ingest = payload.clone();
         ingest.insert(0, protocol as u8);
@@ -348,9 +352,30 @@ impl<'de> Deserialize<'de> for Address {
 /// encode converts the address into a string
 fn encode(addr: &Address) -> String {
     match addr.protocol() {
-        Protocol::Secp256k1 | Protocol::Actor | Protocol::BLS | Protocol::Hierarchical => {
+        Protocol::Secp256k1 | Protocol::Actor | Protocol::BLS => {
             let ingest = addr.to_bytes();
             let mut bz = addr.payload_bytes();
+
+            // payload bytes followed by calculated checksum
+            bz.extend(checksum(&ingest));
+            format!(
+                "{}{}{}",
+                addr.network.to_prefix(),
+                addr.protocol(),
+                ADDRESS_ENCODER.encode(bz.as_mut()),
+            )
+        }
+        Protocol::Hierarchical => {
+            let ingest = addr.to_bytes();
+            let mut bz = addr.payload_bytes();
+
+            // extract levels and set size of address according to number
+            // of levels (to allow the padding to show to many redundant
+            // characters)
+            let levels = from_leb_bytes(&[bz[0]]).unwrap();
+            bz = bz
+                .drain(..HA_ROOT_LEN + (levels as usize - 1) * HA_LEVEL_LEN)
+                .collect();
 
             // payload bytes followed by calculated checksum
             bz.extend(checksum(&ingest));
