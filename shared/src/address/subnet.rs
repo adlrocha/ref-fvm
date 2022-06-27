@@ -68,7 +68,7 @@ impl SubnetID {
         for _ in Path::new(&a).components() {
             size += 1
         }
-        size
+        size - 1 
     }
 
     /// Computes the common parent of the current subnet and the one given
