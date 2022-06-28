@@ -56,7 +56,9 @@ lazy_static::lazy_static! {
 /// Length of the checksum hash for string encodings.
 pub const CHECKSUM_HASH_LEN: usize = 4;
 
-const MAX_ADDRESS_LEN: usize = 140;
+/// Maximum length for an address payload determined by
+/// the maximum size of the hierarchical address.
+const MAX_ADDRESS_LEN: usize = 142;
 
 const MAINNET_PREFIX: &str = "f";
 const TESTNET_PREFIX: &str = "t";

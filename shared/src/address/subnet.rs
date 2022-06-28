@@ -246,8 +246,6 @@ mod tests {
         let sub_id = SubnetID::new(&ROOTNET_ID.clone(), act);
         let bls = Address::from_str("f3vvmn62lofvhjd2ugzca6sof2j2ubwok6cj4xxbfzz4yuxfkgobpihhd2thlanmsh3w2ptld2gqkn2jvlss4a").unwrap();
         let haddr = Address::new_hierarchical(&sub_id, &bls).unwrap();
-        println!("{}", haddr.to_string());
-
         assert_eq!(Address::raw_addr(&haddr).unwrap(), bls);
         assert_eq!(Address::subnet(&haddr).unwrap(), sub_id);
         assert_eq!(Address::raw_addr(&bls).unwrap(), bls);
