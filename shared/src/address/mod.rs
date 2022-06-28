@@ -57,11 +57,6 @@ lazy_static::lazy_static! {
 pub const CHECKSUM_HASH_LEN: usize = 4;
 
 const MAX_ADDRESS_LEN: usize = 140;
-const HA_ROOT_LEN: usize = 5;
-const HA_LEVEL_LEN: usize = 23;
-const HA_SEPARATOR: &str = ":";
-const HA_END: &str = ",";
-const RAW_ADDR_LEN: usize = 66;
 
 const MAINNET_PREFIX: &str = "f";
 const TESTNET_PREFIX: &str = "t";
@@ -142,30 +137,20 @@ impl Address {
 
     /// Generates new hierarchical address
     pub fn new_hierarchical(sn: &SubnetID, addr: &Address) -> Result<Self, Error> {
-        // format the payload
-        let str_payload = format!("{}:{}", sn.to_string(), encode_raw_str(&addr));
-        let payload = str_payload.as_bytes();
-        // add prefix with the number of levels in subnetID
-        let levels = sn.levels();
-        let size_vec = to_leb_bytes(levels as u64)?;
-        let size: &[u8] = size_vec.as_ref();
-        let sp = [size, payload].concat();
+        let sn = sn.to_bytes();
+        let addr = addr.to_bytes();
+        let sn_size_vec = to_leb_bytes(sn.len() as u64)?;
+        let sn_size: &[u8] = sn_size_vec.as_ref();
+        let addr_size_vec = to_leb_bytes(addr.len() as u64)?;
+        let addr_size: &[u8] = addr_size_vec.as_ref();
+        let sp = [sn_size, addr_size, sn.as_slice(), addr.as_slice()].concat();
         // include in fixed-length container
         let mut key = [0u8; MAX_ADDRESS_LEN];
         key[..sp.len()].copy_from_slice(sp.as_slice());
-        // Add end character
-        key[sp.len()] = HA_END.as_bytes()[0];
         Ok(Self {
             network: NETWORK_DEFAULT,
             payload: Payload::Hierarchical(key),
         })
-    }
-
-    // parses hierarchical into its parts
-    fn parse_hierarchical<'a>(&self, raw_p: &'a [u8]) -> Result<Vec<&'a str>, Error> {
-        let str_p = std::str::from_utf8(&raw_p[1..]).map_err(|_| Error::InvalidHierarchicalAddr)?;
-        let raw = str_p.split(HA_END).collect::<Vec<&str>>()[0];
-        Ok(raw.split(HA_SEPARATOR).collect::<Vec<&str>>())
     }
 
     /// Returns the raw address of a hierarchical address (without subnet context)
@@ -176,11 +161,9 @@ impl Address {
             return Ok(self.clone());
         }
 
-        let raw_p = self.payload.to_raw_bytes();
-        let addr_str = self
-            .parse_hierarchical(&raw_p)
-            .map_err(|_| Error::InvalidHierarchicalAddr)?[1];
-        decode_raw_str(&addr_str)
+        let bz = self.payload.to_raw_bytes();
+        let sn_size = from_leb_bytes(&[bz[0]]).unwrap() as usize;
+        Address::from_bytes(&bz[2 + sn_size..])
     }
 
     /// Returns subnets of a hierarchical address
@@ -189,11 +172,11 @@ impl Address {
             return Err(Error::InvalidHierarchicalAddr);
         }
 
-        let raw_p = self.payload.to_raw_bytes();
-        let sub_str = self
-            .parse_hierarchical(&raw_p)
-            .map_err(|_| Error::InvalidHierarchicalAddr)?[0];
-        SubnetID::from_str(sub_str).map_err(|_| Error::InvalidHierarchicalAddr)
+        let bz = self.payload.to_raw_bytes();
+        let sn_size = from_leb_bytes(&[bz[0]]).unwrap() as usize;
+        let s = String::from_utf8(bz[2..sn_size + 2].to_vec())
+            .map_err(|_| Error::InvalidHierarchicalAddr)?;
+        SubnetID::from_str(&s).map_err(|_| Error::InvalidHierarchicalAddr)
     }
 
     pub fn is_bls_zero_address(&self) -> bool {
@@ -374,86 +357,6 @@ fn encode(addr: &Address) -> String {
             from_leb_bytes(&addr.payload_bytes()).expect("should read encoded bytes"),
         ),
     }
-}
-
-fn encode_raw_str(addr: &Address) -> String {
-    if addr.protocol() == Protocol::ID {
-        return format!(
-            "{}{}{}",
-            addr.network.to_prefix(),
-            addr.protocol(),
-            from_leb_bytes(&addr.payload_bytes()).expect("should read encoded bytes"),
-        );
-    }
-
-    let mut bz = addr.payload_bytes();
-    format!(
-        "{}{}{}",
-        addr.network.to_prefix(),
-        addr.protocol(),
-        ADDRESS_ENCODER.encode(bz.as_mut()),
-    )
-}
-
-fn decode_raw_str(addr: &str) -> Result<Address, Error> {
-    if addr.len() > MAX_ADDRESS_LEN || addr.len() < 3 {
-        return Err(Error::InvalidLength);
-    }
-    // ensure the network character is valid before converting
-    let network: Network = match addr.get(0..1).ok_or(Error::UnknownNetwork)? {
-        TESTNET_PREFIX => Network::Testnet,
-        MAINNET_PREFIX => Network::Mainnet,
-        _ => {
-            return Err(Error::UnknownNetwork);
-        }
-    };
-
-    // get protocol from second character
-    let protocol: Protocol = match addr.get(1..2).ok_or(Error::UnknownProtocol)? {
-        "0" => Protocol::ID,
-        "1" => Protocol::Secp256k1,
-        "2" => Protocol::Actor,
-        "3" => Protocol::BLS,
-        "4" => Protocol::Hierarchical,
-        _ => {
-            return Err(Error::UnknownProtocol);
-        }
-    };
-
-    // bytes after the protocol character is the data payload of the address
-    let raw = addr.get(2..).ok_or(Error::InvalidPayload)?;
-    if protocol == Protocol::ID {
-        if raw.len() > 20 {
-            // 20 is max u64 as string
-            return Err(Error::InvalidLength);
-        }
-        let id = raw.parse::<u64>()?;
-        return Ok(Address {
-            network,
-            payload: Payload::ID(id),
-        });
-    }
-
-    // decode using byte32 encoding
-    let mut payload = ADDRESS_ENCODER.decode(raw.as_bytes())?;
-
-    // sanity check to make sure address hash values are correct length
-    if (protocol == Protocol::Secp256k1 || protocol == Protocol::Actor)
-        && payload.len() != PAYLOAD_HASH_LEN
-    {
-        return Err(Error::InvalidPayload);
-    }
-
-    // sanity check to make sure bls pub key is correct length
-    if protocol == Protocol::BLS && payload.len() != BLS_PUB_LEN {
-        return Err(Error::InvalidPayload);
-    }
-
-    if protocol == Protocol::Hierarchical {
-        payload.resize(MAX_ADDRESS_LEN, 0);
-    }
-
-    Address::new(network, protocol, &payload)
 }
 
 pub(crate) fn to_leb_bytes(id: u64) -> Result<Vec<u8>, Error> {

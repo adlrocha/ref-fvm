@@ -62,15 +62,6 @@ impl SubnetID {
         }
     }
 
-    pub fn levels(&self) -> usize {
-        let a = self.to_string();
-        let mut size: usize = 0;
-        for _ in Path::new(&a).components() {
-            size += 1
-        }
-        size - 1
-    }
-
     /// Computes the common parent of the current subnet and the one given
     /// as argument
     pub fn common_parent(&self, other: &SubnetID) -> Option<(usize, SubnetID)> {

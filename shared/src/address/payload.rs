@@ -6,8 +6,7 @@ use std::hash::Hash;
 use std::u64;
 
 use super::{
-    from_leb_bytes, to_leb_bytes, Error, Protocol, BLS_PUB_LEN, HA_LEVEL_LEN, HA_ROOT_LEN,
-    MAX_ADDRESS_LEN, PAYLOAD_HASH_LEN, RAW_ADDR_LEN,
+    from_leb_bytes, to_leb_bytes, Error, Protocol, BLS_PUB_LEN, MAX_ADDRESS_LEN, PAYLOAD_HASH_LEN,
 };
 
 /// Payload is the data of the Address. Variants are the supported Address protocols.
@@ -27,13 +26,10 @@ pub enum Payload {
 
 fn truncate_hc_payload(raw: [u8; MAX_ADDRESS_LEN]) -> Vec<u8> {
     let mut bz = raw.to_vec();
-    // extract levels and set size of address according to number
-    // of levels (to allow the padding to show to many redundant
-    // characters)
-    let levels = from_leb_bytes(&[bz[0]]).unwrap();
-    // 2 - levels + end separator
-    bz.drain(..HA_ROOT_LEN + (levels as usize - 1) * HA_LEVEL_LEN + RAW_ADDR_LEN + 2)
-        .collect()
+    let sn_size = from_leb_bytes(&[bz[0]]).unwrap() as usize;
+    let addr_size = from_leb_bytes(&[bz[1]]).unwrap() as usize;
+    // set to the right size from container
+    bz.drain(..sn_size + addr_size + 2).collect()
 }
 
 impl Payload {
