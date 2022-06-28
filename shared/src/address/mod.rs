@@ -396,64 +396,64 @@ fn encode_raw_str(addr: &Address) -> String {
 }
 
 fn decode_raw_str(addr: &str) -> Result<Address, Error> {
-        if addr.len() > MAX_ADDRESS_LEN || addr.len() < 3 {
+    if addr.len() > MAX_ADDRESS_LEN || addr.len() < 3 {
+        return Err(Error::InvalidLength);
+    }
+    // ensure the network character is valid before converting
+    let network: Network = match addr.get(0..1).ok_or(Error::UnknownNetwork)? {
+        TESTNET_PREFIX => Network::Testnet,
+        MAINNET_PREFIX => Network::Mainnet,
+        _ => {
+            return Err(Error::UnknownNetwork);
+        }
+    };
+
+    // get protocol from second character
+    let protocol: Protocol = match addr.get(1..2).ok_or(Error::UnknownProtocol)? {
+        "0" => Protocol::ID,
+        "1" => Protocol::Secp256k1,
+        "2" => Protocol::Actor,
+        "3" => Protocol::BLS,
+        "4" => Protocol::Hierarchical,
+        _ => {
+            return Err(Error::UnknownProtocol);
+        }
+    };
+
+    // bytes after the protocol character is the data payload of the address
+    let raw = addr.get(2..).ok_or(Error::InvalidPayload)?;
+    if protocol == Protocol::ID {
+        if raw.len() > 20 {
+            // 20 is max u64 as string
             return Err(Error::InvalidLength);
         }
-        // ensure the network character is valid before converting
-        let network: Network = match addr.get(0..1).ok_or(Error::UnknownNetwork)? {
-            TESTNET_PREFIX => Network::Testnet,
-            MAINNET_PREFIX => Network::Mainnet,
-            _ => {
-                return Err(Error::UnknownNetwork);
-            }
-        };
+        let id = raw.parse::<u64>()?;
+        return Ok(Address {
+            network,
+            payload: Payload::ID(id),
+        });
+    }
 
-        // get protocol from second character
-        let protocol: Protocol = match addr.get(1..2).ok_or(Error::UnknownProtocol)? {
-            "0" => Protocol::ID,
-            "1" => Protocol::Secp256k1,
-            "2" => Protocol::Actor,
-            "3" => Protocol::BLS,
-            "4" => Protocol::Hierarchical,
-            _ => {
-                return Err(Error::UnknownProtocol);
-            }
-        };
+    // decode using byte32 encoding
+    let mut payload = ADDRESS_ENCODER.decode(raw.as_bytes())?;
 
-        // bytes after the protocol character is the data payload of the address
-        let raw = addr.get(2..).ok_or(Error::InvalidPayload)?;
-        if protocol == Protocol::ID {
-            if raw.len() > 20 {
-                // 20 is max u64 as string
-                return Err(Error::InvalidLength);
-            }
-            let id = raw.parse::<u64>()?;
-            return Ok(Address {
-                network,
-                payload: Payload::ID(id),
-            });
-        }
+    // sanity check to make sure address hash values are correct length
+    if (protocol == Protocol::Secp256k1 || protocol == Protocol::Actor)
+        && payload.len() != PAYLOAD_HASH_LEN
+    {
+        return Err(Error::InvalidPayload);
+    }
 
-        // decode using byte32 encoding
-        let mut payload = ADDRESS_ENCODER.decode(raw.as_bytes())?;
+    // sanity check to make sure bls pub key is correct length
+    if protocol == Protocol::BLS && payload.len() != BLS_PUB_LEN {
+        return Err(Error::InvalidPayload);
+    }
 
-        // sanity check to make sure address hash values are correct length
-        if (protocol == Protocol::Secp256k1 || protocol == Protocol::Actor)
-            && payload.len() != PAYLOAD_HASH_LEN
-        {
-            return Err(Error::InvalidPayload);
-        }
+    if protocol == Protocol::Hierarchical {
+        payload.resize(MAX_ADDRESS_LEN, 0);
+    }
 
-        // sanity check to make sure bls pub key is correct length
-        if protocol == Protocol::BLS && payload.len() != BLS_PUB_LEN {
-            return Err(Error::InvalidPayload);
-        }
-
-        if protocol == Protocol::Hierarchical {
-            payload.resize(MAX_ADDRESS_LEN, 0);
-        }
-
-        Address::new(network, protocol, &payload)
+    Address::new(network, protocol, &payload)
 }
 
 pub(crate) fn to_leb_bytes(id: u64) -> Result<Vec<u8>, Error> {
