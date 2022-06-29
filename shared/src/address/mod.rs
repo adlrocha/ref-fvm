@@ -56,12 +56,10 @@ lazy_static::lazy_static! {
 /// Length of the checksum hash for string encodings.
 pub const CHECKSUM_HASH_LEN: usize = 4;
 
-// NOTE: To accommodate consensus hierarchies of up to 6 levels in
-// hierarchical addresses we add an additional length buffer.
-// For the MVP we'll leave it like this, but in the future we may want to
-// support constant-length IDs for subnets, to allow us to set
-// this MaxLength accurately without worrying about overflows.
-const MAX_ADDRESS_LEN: usize = 84 + 2 + (4 * 6 + 6);
+/// Maximum length for an address payload determined by
+/// the maximum size of the hierarchical address.
+const MAX_ADDRESS_LEN: usize = 142;
+
 const MAINNET_PREFIX: &str = "f";
 const TESTNET_PREFIX: &str = "t";
 
@@ -141,29 +139,20 @@ impl Address {
 
     /// Generates new hierarchical address
     pub fn new_hierarchical(sn: &SubnetID, addr: &Address) -> Result<Self, Error> {
-        let str_payload = format!("{}::{}", sn.to_string(), addr.to_string());
-        let payload = str_payload.as_bytes();
-        let size_vec = to_leb_bytes(payload.len() as u64)?;
-        let size: &[u8] = size_vec.as_ref();
-        let sp = [size, payload].concat();
+        let sn = sn.to_bytes();
+        let addr = addr.to_bytes();
+        let sn_size_vec = to_leb_bytes(sn.len() as u64)?;
+        let sn_size: &[u8] = sn_size_vec.as_ref();
+        let addr_size_vec = to_leb_bytes(addr.len() as u64)?;
+        let addr_size: &[u8] = addr_size_vec.as_ref();
+        let sp = [sn_size, addr_size, sn.as_slice(), addr.as_slice()].concat();
+        // include in fixed-length container
         let mut key = [0u8; MAX_ADDRESS_LEN];
         key[..sp.len()].copy_from_slice(sp.as_slice());
         Ok(Self {
             network: NETWORK_DEFAULT,
             payload: Payload::Hierarchical(key),
         })
-    }
-
-    // parses hierarchical into its parts
-    fn parse_hierarchical<'a>(&self, raw_p: &'a [u8]) -> Result<Vec<&'a str>, Error> {
-        // the maximum size for the MAX_LENGTH determined by an address required a single
-        // byte for its varint.
-        const VARINT_SIZE: usize = 1;
-        let size = from_leb_bytes(&raw_p[..VARINT_SIZE])
-            .map_err(|_| Error::InvalidHierarchicalAddr)? as usize;
-        let str_p = std::str::from_utf8(&raw_p[VARINT_SIZE..size + 1])
-            .map_err(|_| Error::InvalidHierarchicalAddr)?;
-        Ok(str_p.split("::").collect::<Vec<&str>>())
     }
 
     /// Returns the raw address of a hierarchical address (without subnet context)
@@ -174,11 +163,9 @@ impl Address {
             return Ok(self.clone());
         }
 
-        let raw_p = self.payload.to_raw_bytes();
-        let addr_str = self
-            .parse_hierarchical(&raw_p)
-            .map_err(|_| Error::InvalidHierarchicalAddr)?[1];
-        Address::from_str(addr_str)
+        let bz = self.payload.to_raw_bytes();
+        let sn_size = from_leb_bytes(&[bz[0]]).unwrap() as usize;
+        Address::from_bytes(&bz[2 + sn_size..])
     }
 
     /// Returns subnets of a hierarchical address
@@ -187,11 +174,11 @@ impl Address {
             return Err(Error::InvalidHierarchicalAddr);
         }
 
-        let raw_p = self.payload.to_raw_bytes();
-        let sub_str = self
-            .parse_hierarchical(&raw_p)
-            .map_err(|_| Error::InvalidHierarchicalAddr)?[0];
-        SubnetID::from_str(sub_str).map_err(|_| Error::InvalidHierarchicalAddr)
+        let bz = self.payload.to_raw_bytes();
+        let sn_size = from_leb_bytes(&[bz[0]]).unwrap() as usize;
+        let s = String::from_utf8(bz[2..sn_size + 2].to_vec())
+            .map_err(|_| Error::InvalidHierarchicalAddr)?;
+        SubnetID::from_str(&s).map_err(|_| Error::InvalidHierarchicalAddr)
     }
 
     pub fn is_bls_zero_address(&self) -> bool {
@@ -310,6 +297,10 @@ impl FromStr for Address {
         // sanity check to make sure bls pub key is correct length
         if protocol == Protocol::BLS && payload.len() != BLS_PUB_LEN {
             return Err(Error::InvalidPayload);
+        }
+
+        if protocol == Protocol::Hierarchical {
+            payload.resize(MAX_ADDRESS_LEN, 0);
         }
 
         // validate checksum

@@ -21,8 +21,15 @@ pub enum Payload {
     /// BLS key address, full 48 byte public key
     BLS([u8; BLS_PUB_LEN]),
     /// Hierarchical address. Up to 64 bytes long
-    // FIXME: We should make it dyncamic or longer?
     Hierarchical([u8; MAX_ADDRESS_LEN]),
+}
+
+fn truncate_hc_payload(raw: [u8; MAX_ADDRESS_LEN]) -> Vec<u8> {
+    let mut bz = raw.to_vec();
+    let sn_size = from_leb_bytes(&[bz[0]]).unwrap() as usize;
+    let addr_size = from_leb_bytes(&[bz[1]]).unwrap() as usize;
+    // set to the right size from container
+    bz.drain(..sn_size + addr_size + 2).collect()
 }
 
 impl Payload {
@@ -34,7 +41,7 @@ impl Payload {
             Secp256k1(arr) => arr.to_vec(),
             Actor(arr) => arr.to_vec(),
             BLS(arr) => arr.to_vec(),
-            Hierarchical(arr) => arr.to_vec(),
+            Hierarchical(arr) => truncate_hc_payload(arr),
         }
     }
 
@@ -46,7 +53,7 @@ impl Payload {
             Secp256k1(arr) => arr.to_vec(),
             Actor(arr) => arr.to_vec(),
             BLS(arr) => arr.to_vec(),
-            Hierarchical(arr) => arr.to_vec(),
+            Hierarchical(arr) => truncate_hc_payload(arr),
         };
 
         bz.insert(0, Protocol::from(self) as u8);
@@ -72,11 +79,16 @@ impl Payload {
                     .try_into()
                     .map_err(|_| Error::InvalidPayloadLength(payload.len()))?,
             ),
-            Protocol::Hierarchical => Self::Hierarchical(
-                payload
-                    .try_into()
-                    .map_err(|_| Error::InvalidPayloadLength(payload.len()))?,
-            ),
+            Protocol::Hierarchical => {
+                // paste truncated payload into right size array
+                let mut extended = [0u8; MAX_ADDRESS_LEN];
+                extended[..payload.len()].copy_from_slice(payload);
+                Self::Hierarchical(
+                    extended
+                        .try_into()
+                        .map_err(|_| Error::InvalidPayloadLength(payload.len()))?,
+                )
+            }
         };
         Ok(payload)
     }
@@ -101,7 +113,7 @@ impl From<&Payload> for Protocol {
             Payload::Secp256k1(_) => Self::Secp256k1,
             Payload::Actor(_) => Self::Actor,
             Payload::BLS(_) => Self::BLS,
-            Payload::Hierarchical(_) => Self::BLS,
+            Payload::Hierarchical(_) => Self::Hierarchical,
         }
     }
 }
