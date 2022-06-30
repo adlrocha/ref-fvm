@@ -7,6 +7,7 @@ use anyhow::{anyhow, Context};
 use cid::Cid;
 use fvm_ipld_blockstore::Blockstore;
 use fvm_wasm_instrument::gas_metering::GAS_COUNTER_NAME;
+use fvm_wasm_instrument::parity_wasm::elements;
 use wasmtime::OptLevel::Speed;
 use wasmtime::{Global, GlobalType, Linker, Memory, MemoryType, Module, Mutability, Val, ValType};
 
@@ -23,10 +24,12 @@ pub struct Engine(Arc<EngineInner>);
 #[derive(Clone)]
 pub struct MultiEngine(Arc<Mutex<HashMap<EngineConfig, Engine>>>);
 
+/// The proper way of getting this struct is to convert from `NetworkConfig`
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct EngineConfig {
     pub max_wasm_stack: u32,
     pub wasm_prices: &'static WasmGasPrices,
+    pub actor_redirect: Vec<(Cid, Cid)>,
 }
 
 impl From<&NetworkConfig> for EngineConfig {
@@ -34,6 +37,7 @@ impl From<&NetworkConfig> for EngineConfig {
         EngineConfig {
             max_wasm_stack: nc.max_wasm_stack,
             wasm_prices: &nc.price_list.wasm_rules,
+            actor_redirect: nc.actor_redirect.clone(),
         }
     }
 }
@@ -132,6 +136,9 @@ pub fn default_wasmtime_config() -> wasmtime::Config {
     c.guard_before_linear_memory(true);
     c.parallel_compilation(true);
 
+    #[cfg(feature = "wasmtime/async")]
+    c.async_support(false);
+
     // Doesn't seem to have significant impact on the time it takes to load code
     // todo(M2): make sure this is guaranteed to run in linear time.
     c.cranelift_opt_level(Speed);
@@ -153,6 +160,8 @@ struct EngineInner {
     module_cache: Mutex<HashMap<Cid, Module>>,
     instance_cache: Mutex<anymap::Map<dyn anymap::any::Any + Send>>,
     config: EngineConfig,
+
+    actor_redirect: HashMap<Cid, Cid>,
 }
 
 impl Deref for Engine {
@@ -180,6 +189,8 @@ impl Engine {
         let dummy_memory = Memory::new(&mut dummy_store, MemoryType::new(0, Some(0)))
             .expect("failed to create dummy memory");
 
+        let actor_redirect = ec.actor_redirect.iter().cloned().collect();
+
         Ok(Engine(Arc::new(EngineInner {
             engine,
             dummy_memory,
@@ -187,9 +198,11 @@ impl Engine {
             module_cache: Default::default(),
             instance_cache: Mutex::new(anymap::Map::new()),
             config: ec,
+            actor_redirect,
         })))
     }
 }
+
 struct Cache<K> {
     linker: wasmtime::Linker<InvocationData<K>>,
 }
@@ -206,6 +219,7 @@ impl Engine {
     {
         let mut cache = self.0.module_cache.lock().expect("module_cache poisoned");
         for cid in cids {
+            let cid = self.with_redirect(cid);
             if cache.contains_key(cid) {
                 continue;
             }
@@ -221,8 +235,16 @@ impl Engine {
         Ok(())
     }
 
+    fn with_redirect<'a>(&'a self, k: &'a Cid) -> &'a Cid {
+        match &self.0.actor_redirect.get(k) {
+            Some(cid) => cid,
+            None => k,
+        }
+    }
+
     /// Load some wasm code into the engine.
     pub fn load_bytecode(&self, k: &Cid, wasm: &[u8]) -> anyhow::Result<Module> {
+        let k = self.with_redirect(k);
         let mut cache = self.0.module_cache.lock().expect("module_cache poisoned");
         let module = match cache.get(k) {
             Some(module) => module.clone(),
@@ -264,8 +286,11 @@ impl Engine {
         //   making it charge gas based on memory requested
         // * divide code into metered blocks, and add a call to the gas counter
         //   function before entering each metered block
-        let m = inject(m, self.0.config.wasm_prices, "gas")
+        let mut m = inject(m, self.0.config.wasm_prices, "gas")
             .map_err(|_| anyhow::Error::msg("injecting gas counter failed"))?;
+
+        // Work around #602. Remove this once paritytech/parity-wasm#331 is merged and bubbled.
+        fix_wasm_sections(&mut m);
 
         let wasm = m.to_bytes()?;
         let module = Module::from_binary(&self.0.engine, wasm.as_slice())?;
@@ -279,6 +304,7 @@ impl Engine {
     ///
     /// See [`wasmtime::Module::deserialize`] for safety information.
     pub unsafe fn load_compiled(&self, k: &Cid, compiled: &[u8]) -> anyhow::Result<Module> {
+        let k = self.with_redirect(k);
         let mut cache = self.0.module_cache.lock().expect("module_cache poisoned");
         let module = match cache.get(k) {
             Some(module) => module.clone(),
@@ -293,6 +319,7 @@ impl Engine {
 
     /// Lookup a loaded wasmtime module.
     pub fn get_module(&self, k: &Cid) -> Option<Module> {
+        let k = self.with_redirect(k);
         self.0
             .module_cache
             .lock()
@@ -308,6 +335,7 @@ impl Engine {
         store: &mut wasmtime::Store<InvocationData<K>>,
         k: &Cid,
     ) -> anyhow::Result<Option<wasmtime::Instance>> {
+        let k = self.with_redirect(k);
         let mut instance_cache = self.0.instance_cache.lock().expect("cache poisoned");
 
         let cache = match instance_cache.entry() {
@@ -351,5 +379,20 @@ impl Engine {
         store.data_mut().avail_gas_global = gg;
 
         store
+    }
+}
+
+// Workaround for https://github.com/filecoin-project/ref-fvm/issues/602
+//
+// This removes the out-of-order data count section, if it exists, and re-inserts it (with the
+// correct data-count).
+fn fix_wasm_sections(module: &mut elements::Module) {
+    module
+        .sections_mut()
+        .retain(|sec| !matches!(sec, elements::Section::DataCount(_)));
+    if let Some(data_count) = module.data_section().map(|data| data.entries().len()) {
+        module
+            .insert_section(elements::Section::DataCount(data_count as u32))
+            .expect("section wasn't deleted");
     }
 }

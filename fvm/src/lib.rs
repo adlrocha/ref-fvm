@@ -16,8 +16,6 @@ pub mod kernel;
 pub mod machine;
 pub mod syscalls;
 
-// TODO Public only for conformance tests.
-//  Consider exporting only behind a feature.
 pub mod gas;
 pub mod state_tree;
 
@@ -76,7 +74,10 @@ mod test {
             _round: fvm_shared::clock::ChainEpoch,
             _entropy: &[u8],
         ) -> anyhow::Result<[u8; 32]> {
-            todo!()
+            let msg = "mel was here".as_bytes();
+            let mut out = [0u8; 32];
+            out[..msg.len()].copy_from_slice(msg);
+            Ok(out)
         }
 
         fn get_beacon_randomness(
@@ -96,7 +97,8 @@ mod test {
             _h2: &[u8],
             _extra: &[u8],
         ) -> anyhow::Result<(Option<fvm_shared::consensus::ConsensusFault>, i64)> {
-            todo!()
+            // consensus is always valid for tests :)
+            Ok((None, 0))
         }
     }
 

@@ -31,7 +31,13 @@ pub enum SendResult {
     Abort(ExitCode),
 }
 
-/// The "kernel" implements
+/// The "kernel" implements the FVM interface as presented to the actors. It:
+///
+/// - Manages the Actor's state.
+/// - Tracks and charges for IPLD & syscall-specific gas.
+///
+/// Actors may call into the kernel via the syscalls defined in the [`syscalls`][crate::syscalls]
+/// module.
 pub trait Kernel:
     ActorOps
     + IpldBlockOps
@@ -315,4 +321,8 @@ pub trait DebugOps {
 
     /// Returns whether debug mode is enabled.
     fn debug_enabled(&self) -> bool;
+
+    /// Store an artifact.
+    /// Returns error on malformed name, returns Ok and logs the error on system/os errors.
+    fn store_artifact(&self, name: &str, data: &[u8]) -> Result<()>;
 }

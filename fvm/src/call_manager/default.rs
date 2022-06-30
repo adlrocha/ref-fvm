@@ -45,6 +45,8 @@ pub struct InnerDefaultCallManager<M> {
     backtrace: Backtrace,
     /// The current execution trace.
     exec_trace: ExecutionTrace,
+    /// Number of actors that have been invoked in this message execution.
+    invocation_count: u64,
 }
 
 #[doc(hidden)]
@@ -79,6 +81,7 @@ where
             call_stack_depth: 0,
             backtrace: Backtrace::default(),
             exec_trace: vec![],
+            invocation_count: 0,
         })))
     }
 
@@ -120,9 +123,12 @@ where
         // NOTE: Unlike the FVM, Lotus adds _then_ checks. It does this because the
         // `call_stack_depth` in lotus is 0 for the top-level call, unlike in the FVM where it's 1.
         if self.call_stack_depth > self.machine.context().max_call_depth {
-            return Err(
-                syscall_error!(LimitExceeded, "message execution exceeds call depth").into(),
-            );
+            let sys_err = syscall_error!(LimitExceeded, "message execution exceeds call depth");
+            if self.machine.context().tracing {
+                self.exec_trace
+                    .push(ExecutionEvent::CallError(sys_err.clone()))
+            }
+            return Err(sys_err.into());
         }
         self.call_stack_depth += 1;
         let result = self.send_unchecked::<K>(from, to, method, params, value);
@@ -165,10 +171,10 @@ where
     }
 
     fn finish(mut self) -> (FinishRet, Self::Machine) {
+        // TODO: Having to check against zero here is fishy, but this is what lotus does.
         let gas_used = self.gas_tracker.gas_used().max(Gas::zero()).round_up();
 
         let inner = self.0.take().expect("call manager is poisoned");
-        // TODO: Having to check against zero here is fishy, but this is what lotus does.
         (
             FinishRet {
                 gas_used,
@@ -213,6 +219,10 @@ where
         let ret = self.num_actors_created;
         self.num_actors_created += 1;
         ret
+    }
+
+    fn invocation_count(&self) -> u64 {
+        self.invocation_count
     }
 }
 
@@ -327,13 +337,15 @@ where
         }
 
         // Store the parametrs, and initialize the block registry for the target actor.
-        // TODO: In M2, the block registry may have some form of shared block limit.
         let mut block_registry = BlockRegistry::new();
         let params_id = if let Some(blk) = params {
             block_registry.put(blk)?
         } else {
             NO_DATA_BLOCK_ID
         };
+
+        // Increment invocation count
+        self.invocation_count += 1;
 
         // This is a cheap operation as it doesn't actually clone the struct,
         // it returns a referenced copy.

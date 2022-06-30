@@ -92,14 +92,8 @@ pub fn charge_for_exec(
 use self::bind::BindSyscall;
 use self::error::Abort;
 
-/// The maximum supported CID size. (SPEC_AUDIT)
-pub const MAX_CID_LEN: usize = 100;
-
 // Binds the syscall handlers so they can handle invocations
 // from the actor code.
-//
-// TODO try to fix the static lifetime here. I want to tell the compiler that
-//  the Kernel will live as long as the Machine and the Linker.
 pub fn bind_syscalls(
     linker: &mut Linker<InvocationData<impl Kernel + 'static>>,
 ) -> anyhow::Result<()> {
@@ -175,6 +169,7 @@ pub fn bind_syscalls(
 
     linker.bind("debug", "log", debug::log)?;
     linker.bind("debug", "enabled", debug::enabled)?;
+    linker.bind("debug", "store_artifact", debug::store_artifact)?;
 
     Ok(())
 }

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## 1.0.0 [2022-06-23]
+
+- Update to the latest `fvm_shared`, which supports the new proofs types.
+- Fix the ipld get/read method to correctly handle blocks with approximate sizes.
+- Use the new shared `MAX_CID_LEN` constant.
+- Cleanup some TODOs
+- Revert accidental bump of `MAX_CID_LEN` to 256 (back to 100).
+
 ## 0.7.0 [2022-05-16]
 
 This release contains a large syscall refactor.

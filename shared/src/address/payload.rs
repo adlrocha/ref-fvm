@@ -11,6 +11,7 @@ use super::{
 
 /// Payload is the data of the Address. Variants are the supported Address protocols.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "arb", derive(arbitrary::Arbitrary))]
 pub enum Payload {
     /// ID protocol address.
     ID(u64),

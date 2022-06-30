@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## 0.8.0 [2022-06-13]
+
+- Add a new proofs version type.
+
+## 0.7.1 [2022-05-26]
+
+Add a shared `MAX_CID_LEN` constant.
+
 ## 0.7.0 [2022-05-16]
 
 - Updates the blockstore.

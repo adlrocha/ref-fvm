@@ -20,7 +20,7 @@ pub use default::DefaultMachine;
 
 mod engine;
 
-pub use engine::{Engine, MultiEngine};
+pub use engine::{Engine, EngineConfig, MultiEngine};
 
 mod boxed;
 
@@ -68,7 +68,6 @@ pub trait Machine: 'static {
     fn state_tree_mut(&mut self) -> &mut StateTree<Self::Blockstore>;
 
     /// Creates an uninitialized actor.
-    // TODO: Remove
     fn create_actor(&mut self, addr: &Address, act: ActorState) -> Result<ActorID>;
 
     /// Transfers tokens from one actor to another.
@@ -84,6 +83,9 @@ pub trait Machine: 'static {
 
     /// Consumes the machine and returns the owned blockstore.
     fn into_store(self) -> Self::Blockstore;
+
+    /// Returns a generated ID of a machine
+    fn machine_id(&self) -> &str;
 }
 
 /// Network-level settings. Except when testing locally, changing any of these likely requires a
@@ -117,6 +119,9 @@ pub struct NetworkConfig {
     ///
     /// DEFAULT: The price-list for the current network version.
     pub price_list: &'static PriceList,
+
+    /// Actor redirects for debug execution
+    pub actor_redirect: Vec<(Cid, Cid)>,
 }
 
 impl NetworkConfig {
@@ -129,6 +134,7 @@ impl NetworkConfig {
             actor_debugging: false,
             builtin_actors_override: None,
             price_list: price_list_by_network_version(network_version),
+            actor_redirect: vec![],
         }
     }
 
@@ -143,6 +149,12 @@ impl NetworkConfig {
     /// networks prior to NV16 (where the actor's "manifest" isn't specified on-chain).
     pub fn override_actors(&mut self, manifest: Cid) -> &mut Self {
         self.builtin_actors_override = Some(manifest);
+        self
+    }
+
+    /// Set actor redirects for debug execution
+    pub fn redirect_actors(&mut self, actor_redirect: Vec<(Cid, Cid)>) -> &mut Self {
+        self.actor_redirect = actor_redirect;
         self
     }
 
