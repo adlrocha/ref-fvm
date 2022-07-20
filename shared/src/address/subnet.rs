@@ -257,6 +257,15 @@ mod tests {
     }
 
     #[test]
+    fn test_hierarchical_from_str() {
+        let sub_id = SubnetID::new(&ROOTNET_ID.clone(), Address::new_id(100));
+        let addr = Address::new_hierarchical(&sub_id, &Address::new_id(101)).unwrap();
+        let st = addr.to_string();
+        let addr_out = Address::from_str(&st).unwrap();
+        assert_eq!(addr, addr_out);
+    }
+
+    #[test]
     fn test_common_parent() {
         common_parent("/root/f01", "/root/f01/f02", "/root/f01", 2);
         common_parent("/root/f01/f02/f03", "/root/f01/f02", "/root/f01/f02", 3);

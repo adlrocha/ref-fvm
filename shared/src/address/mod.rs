@@ -299,12 +299,13 @@ impl FromStr for Address {
             return Err(Error::InvalidPayload);
         }
 
+        // validate checksum
+        let mut ingest = payload.clone();
+
         if protocol == Protocol::Hierarchical {
             payload.resize(MAX_ADDRESS_LEN, 0);
         }
 
-        // validate checksum
-        let mut ingest = payload.clone();
         ingest.insert(0, protocol as u8);
         if !validate_checksum(&ingest, cksm) {
             return Err(Error::InvalidChecksum);
